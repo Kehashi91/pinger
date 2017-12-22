@@ -5,12 +5,14 @@ import sys
 import re
 import smtplib
 import time
+import getpass
+
 try:
     import openpyxl
 except ImportError as IE:
     print ("Nie wykryto modułu openpyxl. Zainstaluj openpyxl.")
     sys.exit(1)
-
+    
 def openfile():
     """Tworzy listę plików .xlsx w katalogu, zwraca ich listę pozwalając na wybór
     gdy istnieje tylko jeden plik, natychmiast go parsuje. Zamyka program w razie
@@ -40,17 +42,19 @@ def openfile():
     elif len(filelist) == 0:
         print ("Brak pliku excel")
         exit(1)
-        
     else:
         print ("Odnaleziono plik: {}".format(filelist[0]))
         return filelist[0]
 
 def checkmail(cell):
-    """Funkcja używa wyrazenia regularnego do sprawdzenia, czy string
-    jest adresem mailowym."""
+    """Funkcja używa wyrazenia regularnego do sprawdzenia, czy string/komórka
+    jest adresem mailowym.
+    ad.1 - funkcja domyśnie obrabia komórwki, ale wykorzystujemy ją również
+    dla weryfukacji poprawności adresu mailowego, dlatego akceptuje też string."""
 
-    if type(cell) != str:
+    if type(cell) != str:   #patrz ad.1
         cell = cell.value
+        
     mailre = re.compile(r'([^\s]+)@([\w]+)\.([\w]+)')
     if cell and cell.startswith("mailto:"):
         print ("Uwaga: w wierszu {} odnaleziono bezpośredni odnośnik '{}',\n"\
@@ -74,7 +78,7 @@ def checkurl(cell):
         return False
 
         
-def rowverification(row):
+def rowverification(row, mail):
     """Funkcja werfikuje dany wiersz. Sprawdza, czy istnieje
     link do redmine (sprawdzany poprzez checkurl() oraz opis
     do ticketu, którym może byc dowolny niepusty string.
@@ -83,23 +87,26 @@ def rowverification(row):
     
     desc = ""
     link = ""
-    #print (row[0].row)
+    
+
+    if not checkemptyrow(row):
+        return False
+    
     for cell in row:
         if checkmail(cell):# Musimy ponownie sprwadzić, czy jest mail we fukncji, by nie został zinterpretowany jako opis.
-            print("leeeel juz jest mail") 
             pass
+        elif checkmail(cell) and cell.value != mail:
+            return False
         elif checkurl(cell.value) and link:
             raise ValueError("W wierszu {} istnieją zduplikowane linki".format(cell.row))
         elif checkurl(cell.value) and not link:
-            print("leeeel to url") 
             link = cell.value
         elif cell.value and desc:
             raise ValueError("W wierszu {} istnieją zduplikowane opisy".format(cell.row))
         elif cell.value:
-            print("leeeel to desc") 
             desc = cell.value.strip()
-            
-    if desc and link:        
+
+    if desc and link:
         return ' - '.join([link, desc])
     elif not desc:
         raise ValueError("W wierszu {} brakuje opisu.".format(row[0].row))
@@ -118,74 +125,61 @@ def readxlsfile(xlsfile):
     return activesheet
     
 
-def checkemptyrows(worksheet, position):
-        rowtocheck = [cell.value for cell in worksheet[position - 1] if cell.value != None]
-        print(rowtocheck)	
-        if rowtocheck:
-            return True
-        else:
-            return False
+def checkemptyrow(row):	
+    """Funkcja sprwadza, czy wierss jako całość jest pusty"""
+    rowtocheck = [cell.value for cell in row if cell.value != None]
+    if rowtocheck:
+        return True
+    else:
+        return False
     
 def tablemap(worksheet):
-
-    mailmapfinal  = []
+    """ Konstruuje listę wszystkich maili wraz z nr wiersza
+    w którym występuje."""
+    
     mailmap = []
     mailadresses = []
+    messagedict = {}
     
     for column in tuple(worksheet.columns):
         for cell in column:
-            if checkmail(cell):
+            if checkmail(cell) and cell.value not in mailadresses:
                 mailmap.append(cell.row)
                 mailadresses.append(cell.value)
     
-    mailmap.append(worksheet.max_row)
-    mailmapnext = mailmap[1:] # for clarity, since we have to compare every position to next, otherwise everywhere would be mailmap[mailmap.index(mail) + 1]
-    
-    print (mailmap)
-    print (mailmapnext)
-    
-    for mail, nextmail in zip(mailmap[0:len(mailmap) - 1], mailmapnext):
-        if mailmap.index(mail) == len(mailmap) - 2:
-            print("Tru")
-            mailmapfinal.append((mail, nextmail))
-        elif checkemptyrows(worksheet, nextmail):
-            print("Tru1")
-            mailmapfinal.append((mail, nextmail - 1))
-        elif not checkemptyrows(worksheet, nextmail):
-            mailmapfinal.append((mail, nextmail - 2))
-            print("Tru2")
-    
-    print(mailmapfinal)
-    print(mailadresses)
-    messagedict = messagedataconstructor(worksheet, mailmapfinal, mailadresses)
-    if messagesaccept(messagedict):
-        return messagedict
-        
-def messagedataconstructor(worksheet, mailmap, mailadress):
-
-    formattedresponse = "Cześć,\nProsimy o aktualizacje zgłoszeń/złoszenia zgodnie z poniższą listą:\n"
-    messagedict = {}
-    
-    for object, mail in zip(mailmap, mailadress):
-        responselist = []
-        if object[0] == object[1]:
-            responselist.append(rowverification(worksheet[object[0]]))
-        else:
-            for row in worksheet[object[0]:object[1]]:
-                responselist.append(rowverification(row))
-            pinglist = '\n'.join(responselist)
-            messagedict[mail] = "{}{}".format(formattedresponse, pinglist)
-        
+    for mapping, mail in zip(mailmap, mailadresses):
+            messagedict.update(sheetwalker(mapping, mail))
+            
     return messagedict
+
+def sheetwalker(mapping, mail):
+    """wykorzystuje dane z tablemap do stworzenia kompletnych wiadomości 
+    w postaci dictionary w którym klucz jest adresem mailowym, a wartość
+    już sformatowanym stringiem stanowiącym pełną treść wiadomości."""
     
+    message = {}
+    response = ["Cześć,\nProsimy o aktualizacje zgłoszeń/złoszenia zgodnie z poniższą listą:\n"]
+    counter = mapping
+    
+    while counter <= worksheet.max_row:
+        row = rowverification(worksheet[counter], mail)
+        counter += 1
+        if not row or counter == worksheet.max_row:
+            message[mail] = '\n'.join(response)
+            return message
+        else:
+            response.append(row)
+
+  
 def getsmtpdata():
     """Funkcja odpytująca użytkownika o dane do smtp."""
+    
     while True:
-        username = "a.kaczmarek@beyond.pl"
-        #username = input("Wprowadź swój adres email > ")
+    
+        username = input("Wprowadź swój adres email > ")
+        
         if checkmail(username):
-            #password = input("Podaj hasło do smtp:")
-            password = "3aEvb@5Q"
+            password = getpass.getpass()
             return tuple([username, password])
         else:
             print ("Wprowadź poprawny adres email!")
@@ -209,13 +203,15 @@ def messagesaccept(messagedict):
         elif accept == "N":
             print ("Exiting...")
             exit(0)
+        print ("Wpisz T lub N!")
+
 
         
 def smtpconnect(login, password):
     """Funkcja logująca się do serwera SMTP"""
     
-    print("Łącze do serera SMTP: mx.beyond.pl, port 465")
-    mailserver = smtplib.SMTP_SSL('mx.beyond.pl', 465, timeout=10)
+    print("Łącze do serera SMTP: xxx, port 465")
+    mailserver = smtplib.SMTP_SSL('xxx', 465, timeout=10)
     
     print("Połączono z serwerem SMTP")
     mailserver.ehlo()
@@ -226,7 +222,7 @@ def smtpconnect(login, password):
     print("Pomyślne logowanie via SSL.")
     return mailserver
     
-def sendping(messagedict, fromaddr, ccaddres="a.kaczmarek@beyond.pl"):
+def sendping(messagedict, fromaddr, ccaddres="xxx"):
     """Funkcja wysyłająca wiadomości po udanym logowaniu SMTP."""
     
     for key in messagedict:
@@ -253,6 +249,7 @@ if __name__ == "__main__":
     pingfile = openfile()
     worksheet = readxlsfile(pingfile)
     pingsend = tablemap(worksheet)
+    messagesaccept(pingsend)
     smtplogindata = getsmtpdata()
     #smtserver = smtpconnect(smtplogindata[0], smtplogindata[1])
     #sendping(pingsend, smtplogindata[0])
