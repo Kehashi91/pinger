@@ -1,3 +1,5 @@
+-- wersja demonstracyjna z przykładami -- 
+
 INSTALACJA:
 1. Pobieramy Pythona 3.6.4 ze strony https://www.python.org/downloads/
 2. Plik pinger.py wrzucamy do folderu, w którym znajduje lub będzie się znajdował plik z pingami weekendowymi.

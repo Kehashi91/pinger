@@ -54,11 +54,12 @@ def checkmail(cell):
 
     if type(cell) != str:   #patrz ad.1
         cell = cell.value
+
         
     mailre = re.compile(r'([^\s]+)@([\w]+)\.([\w]+)')
     if cell and cell.startswith("mailto:"):
         print ("Uwaga: w wierszu {} odnaleziono bezpośredni odnośnik '{}',\n"\
-        "sprawdź wiersz (może wyglądać na pusty, ale tak nie jest.)".format(cell.row, cell))
+        "sprawdź wiersz (może wyglądać na pusty, ale tak nie jest.)".format("k", cell))
         time.sleep(1)
     elif cell and mailre.match(cell.strip()):
         return True
@@ -70,7 +71,7 @@ def checkurl(cell):
     """Funkcja używa wyrazenia regularnego do sprawdzenia, czy string
     jest linkiem do redmine."""
     
-    checkurlre = re.compile(r'https://redmine.beyond.pl/issues/[0-9]{6}')
+    checkurlre = re.compile(r'https://example.redmine.com/ticket/[0-9]{5}') #przykład sprawdzający poprawność url
     
     if cell and checkurlre.match(cell.strip()):
         return True
@@ -93,10 +94,10 @@ def rowverification(row, mail):
         return False
     
     for cell in row:
-        if checkmail(cell):# Musimy ponownie sprwadzić, czy jest mail we fukncji, by nie został zinterpretowany jako opis.
-            pass
-        elif checkmail(cell) and cell.value != mail:
+        if checkmail(cell) and cell.value != mail:
             return False
+        elif checkmail(cell):# Musimy ponownie sprwadzić, czy jest mail we fukncji, by nie został zinterpretowany jako opis.
+            pass
         elif checkurl(cell.value) and link:
             raise ValueError("W wierszu {} istnieją zduplikowane linki".format(cell.row))
         elif checkurl(cell.value) and not link:
@@ -125,7 +126,7 @@ def readxlsfile(xlsfile):
     return activesheet
     
 
-def checkemptyrow(row):	
+def checkemptyrow(row): 
     """Funkcja sprwadza, czy wierss jako całość jest pusty"""
     rowtocheck = [cell.value for cell in row if cell.value != None]
     if rowtocheck:
@@ -141,7 +142,7 @@ def tablemap(worksheet):
     mailadresses = []
     messagedict = {}
     
-    for column in tuple(worksheet.columns):
+    for column in tuple(worksheet.rows):
         for cell in column:
             if checkmail(cell) and cell.value not in mailadresses:
                 mailmap.append(cell.row)
@@ -158,17 +159,19 @@ def sheetwalker(mapping, mail):
     już sformatowanym stringiem stanowiącym pełną treść wiadomości."""
     
     message = {}
-    response = ["Cześć,\nProsimy o aktualizacje zgłoszeń/złoszenia zgodnie z poniższą listą:\n"]
+    response = ["Cześć,\n\nProsimy o aktualizacje zgłoszeń/złoszenia zgodnie z poniższą listą:\n"]
     counter = mapping
+    loopflag = True
     
-    while counter <= worksheet.max_row:
+    while counter <= worksheet.max_row and loopflag:
         row = rowverification(worksheet[counter], mail)
         counter += 1
-        if not row or counter == worksheet.max_row:
-            message[mail] = '\n'.join(response)
-            return message
+        if not row:
+            loopflag = False
         else:
             response.append(row)
+    message[mail] = '\n'.join(response)
+    return message
 
   
 def getsmtpdata():
@@ -197,24 +200,24 @@ def messagesaccept(messagedict):
         print ("\n")
         
     while True:    
-        accept = input("Czy chcesz rozesłać ten ping? (T/N) >")
-        if accept == "T":
+        accept = input("Czy chcesz rozesłać ten ping? (t/n) >")
+        if accept == "t":
             return True
-        elif accept == "N":
+        elif accept == "n":
             print ("Exiting...")
             exit(0)
-        print ("Wpisz T lub N!")
+        print ("Wpisz t lub n!")
 
 
         
 def smtpconnect(login, password):
     """Funkcja logująca się do serwera SMTP"""
     
-    print("Łącze do serera SMTP: xxx, port 465")
-    mailserver = smtplib.SMTP_SSL('xxx', 465, timeout=10)
+    print("Łącze do serera SMTP: smtp-mail.outlook.com, port 587")
+    mailserver = smtplib.SMTP('smtp-mail.outlook.com', 587, timeout=10)
     
     print("Połączono z serwerem SMTP")
-    mailserver.ehlo()
+    mailserver.starttls()
     
     print("Wymieniono wiadomości powitalne")
     mailserver.login(login, password)
@@ -222,7 +225,7 @@ def smtpconnect(login, password):
     print("Pomyślne logowanie via SSL.")
     return mailserver
     
-def sendping(messagedict, fromaddr, ccaddres="xxx"):
+def sendping(messagedict, fromaddr, ccaddres="alias@example.com"):
     """Funkcja wysyłająca wiadomości po udanym logowaniu SMTP."""
     
     for key in messagedict:
@@ -241,7 +244,7 @@ def sendping(messagedict, fromaddr, ccaddres="xxx"):
         
     print ("Rozesłano wszystkie pingi.")
     smtserver.quit()
-    print ("Zamknięto połączenie SMTP")
+    print ("Zamknięto połączenie SMTP.")
     print ("Exiting...")
 
 
@@ -251,6 +254,5 @@ if __name__ == "__main__":
     pingsend = tablemap(worksheet)
     messagesaccept(pingsend)
     smtplogindata = getsmtpdata()
-    #smtserver = smtpconnect(smtplogindata[0], smtplogindata[1])
-    #sendping(pingsend, smtplogindata[0])
-
+    smtserver = smtpconnect(smtplogindata[0], smtplogindata[1])
+    sendping(pingsend, smtplogindata[0])
